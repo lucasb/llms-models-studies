@@ -164,16 +164,46 @@ logits, loss = model(ctx, trgt)
 print(logits.shape)
 print(loss)
 
-# generate samples
-init_context_index = torch.zeros(
-    (1, 1), dtype=torch.long
-)  # generate a tensor = [[0]] (B, T) or [0][0] = 0
-generated_tokens = model.generate(
-    init_context_index, 100
-)  # generate a list of tokens [[0, 1, 2, 3, ..., 99]] (B, T)
-text_decoded = decode(
-    generated_tokens[0].tolist()
-)  # remove the first dimention of tokens to [0, 1,2, 3, ..., 99] and convert form tensor to a list
-print(text_decoded)
 
-# stop in 35min of https://www.youtube.com/watch?v=kCc8FmEb1nY&list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ&index=10
+def generate_sample(max_tokens=100):
+    # generate samples
+    init_context_index = torch.zeros(
+        (1, 1), dtype=torch.long
+    )  # generate a tensor = [[0]] (B, T) or [0][0] = 0
+    generated_tokens = model.generate(
+        init_context_index, max_tokens
+    )  # generate a list of tokens [[0, 1, 2, 3, ..., 99]] (B, T)
+    text_decoded = decode(
+        generated_tokens[0].tolist()
+    )  # remove the first dimention of tokens to [0, 1,2, 3, ..., 99] and convert form tensor to a list
+    print(text_decoded)
+
+
+generate_sample()
+
+# #############################################
+# Training the model
+# #############################################
+
+# create a PyTorch optimizer
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+
+# staps for Traning
+batch_size = 32  # overwrite the batch_size to more real traning
+
+for steps in range(10000):
+    # sample a batch of data
+    context, targets = get_batch("train")
+
+    # evaluate the loss
+    logits, loss = model(context, targets)
+    # initialize optimizer with zero grad
+    optimizer.zero_grad(set_to_none=True)
+    # calc loss
+    loss.backward()
+    optimizer.step()
+
+print(loss.item())
+generate_sample(300)
+
+# stoped in 38min
