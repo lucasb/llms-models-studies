@@ -204,6 +204,58 @@ for steps in range(10000):
     optimizer.step()
 
 print(loss.item())
-generate_sample(300)
+generate_sample(1000)
 
-# stoped in 38min
+# #############################################
+# Math behind of self-attention
+# #############################################
+torch.manual_seed(1337)
+B, T, C = 4, 8, 2  # Batch, Time/Context, Channel/Vocab
+x = torch.randn(B, T, C)
+
+print(x.shape)
+bag_of_words = torch.zeros((B, T, C))
+for b in range(B):
+    for t in range(T):
+        ctx_prev = x[b, : t + 1]  # interate from (t, C)
+        bag_of_words[b, t] = torch.mean(ctx_prev, 0)
+
+# make it more efficiente using matrix multiplication
+matrix_of_ones = torch.ones(
+    3, 3
+)  # generate a matrix with 3 rows and 3 columns with value  1. for all positions
+# mask the value to avoid look to future values
+a = torch.tril(matrix_of_ones)  # make the values of the superior triagle equels to zero
+a = a / torch.sum(
+    a, 1, keepdim=True
+)  # sum by line and calc the average of each value on the row.
+b = torch.randint(
+    0, 10, (3, 2)
+).float()  # make a randon matrix with values from 0 to 10 in a metrix 3 by 2
+c = a @ b  # multiply the matrix
+print(a, b, c)
+
+# Apply this efficient improvemwnt for the model  B, T, C
+
+# create a B, T, T  matrix
+tril = torch.tril(
+    torch.ones(T, T)
+)  # create the matrix by the vocab with 0s on the upper triangle
+
+weights = torch.zeros((T, T))
+# mask to cap the futura dimentions to avoid context look in the furute and keep only on past
+weights = weights.masked_fill(
+    tril == 0, float("-inf")
+)  # apply filter to mask .0 to -inf value
+
+# weights = weights / weights.sum(1, keepdim=True)  # make the average of weights per line
+weights = F.softmax(
+    weights, dim=-1
+)  # normalization operation, makin it similar with average
+# multiply weights(B, T, T) @ x(B, T, C) -> bow(B, T, C)
+bow = weights @ x  # multiply values to calculateh the past average of each vocab probs
+
+# comparing with both implementation (for and multiply) have the same result
+print(torch.allclose(bag_of_words, bow))
+print(bag_of_words[0])
+print(bow[0])
