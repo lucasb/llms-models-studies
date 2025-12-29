@@ -3,19 +3,22 @@
 
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+from torch.nn import Dropout, functional as F
 
 # ###########################################
 # Hyperparams
 # ##########################################
-batch_size = 32  # independent sequences to process in parallel
-block_size = 8  # known as context length for prediction
+batch_size = 16  # independent sequences to process in parallel
+block_size = 32  # known as context length for prediction
 max_iters = 5000  # max of loop steps in train
-eval_interval = 300
+eval_interval = 500
 learning_rate = 1e-3  # size of grad updates, impact the velocity of learning
 device = "cpu"  # Nvidea replace with 'cuda' if intel 'xpu'
 eval_iters = 200  # max loop steps in evaluation mode
-num_embed_dim = 32  # numeber of embedding dimentions
+num_embed_dim = 64  # numeber of embedding dimentions
+num_heads = 4
+num_layers = 4
+dropout = 0.2  # % of neurons will be removed during trainig randonly
 
 # keep the rand fucntion fixed.
 torch.manual_seed(1337)
@@ -76,10 +79,10 @@ def get_batch(split):
     context = torch.stack(
         [dataset[rand_int : rand_int + block_size] for rand_int in rand_ints]
     )
-    context = context.to(device)
     target = torch.stack(
         [dataset[rand_int + 1 : rand_int + block_size + 1] for rand_int in rand_ints]
     )
+    context = context.to(device)
     target = target.to(device)
     return context, target
 
@@ -98,7 +101,6 @@ def estimate_loss():
         losses = torch.zeros(eval_iters)  # tensor to calculate losses
         for k in range(eval_iters):
             ctx, trgt = get_batch(split)  # get batch tensor context and targets
-            print(ctx, trgt)
             _, loss = model(
                 ctx, trgt
             )  # get loss for the model at the current iteration
@@ -116,6 +118,8 @@ class Head(nn.Module):  # one head of self-attention
         self.key = nn.Linear(num_embed_dim, head_size, bias=False)
         self.query = nn.Linear(num_embed_dim, head_size, bias=False)
         self.value = nn.Linear(num_embed_dim, head_size, bias=False)
+
+        self.dropout = nn.Dropout(dropout)
         # register the tril to use in mask
         self.register_buffer("tril", torch.tril(torch.ones(block_size, block_size)))
 
@@ -125,28 +129,101 @@ class Head(nn.Module):  # one head of self-attention
         q = self.query(embedded)  # (B, T, C)
         # compute attention scores ("affinities")
         weights = (
-            q @ k.transpose(-2, -1) * C**-0.5
-        )  # why traspose? multiply by C to nomalize values for softmax
+            q
+            @ k.transpose(-2, -1)
+            * C**-0.5  # muliply by square root to normalize values when defused numbers
+        )  # Traspose K to keep B and muliply by the heads_size to find affinitie and reducing it to B, T, T
         weights = weights.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         weights = F.softmax(weights, dim=-1)  # (B, T, T)
+        weights = self.dropout(weights)
         # perform the weighted aggregation of the values
         v = self.value(embedded)
         out = weights @ v
         return out
 
 
+# implement the multi head attention by create a list of heads and runn it in parallel
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        # TODO: Discover why is PROJECTIONS needed?
+        self.projections = nn.Linear(
+            num_embed_dim, num_embed_dim
+        )  # get it from global variables
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, embedded):
+        heads_out = torch.cat([head(embedded) for head in self.heads], dim=-1)
+        heads_out = self.projections(heads_out)
+        heads_out = self.dropout(heads_out)
+        return heads_out  # return head after projection WHY?
+
+
+# feedfoward MLP to run after the attention and granuali discovery better relation on self-attention waights
+class FeedFoward(nn.Module):
+    def __init__(self, num_embed_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(
+                num_embed_dim, 4 * num_embed_dim
+            ),  # multiply by 4 based on attention paper, so the internal side should be 4x the residual to improve perform.
+            nn.ReLU(),
+            nn.Linear(
+                4 * num_embed_dim, num_embed_dim
+            ),  # add a projection here as well. TODO: why? to work the addition on residual forward operation???
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, embedded):
+        return self.net(embedded)
+
+
+# implement block of attention and feedfoward to repeat multiple times
+class Block(nn.Module):
+    def __init__(self, num_embed_dim, num_heads):
+        super().__init__()
+        head_size = (
+            num_embed_dim // num_heads
+        )  # devide the numbers of dimentions to head to process in parallel. e.g., 32 // 4 = 8
+        self.self_attention_heads = MultiHeadAttention(
+            num_heads, head_size
+        )  # communicate affinities
+        self.feed_foward = FeedFoward(
+            num_embed_dim
+        )  # compute the relations / MLP of individual embeddings
+        # layer norms oer token, stand the tokens during the initialization
+        self.layer_normalization_self_attention = nn.LayerNorm(num_embed_dim)
+        self.layer_normalization_feed_foward = nn.LayerNorm(num_embed_dim)
+
+    def forward(self, embedded):
+        # add embedded is the why to have residual connection between layers
+        embedded = embedded + self.self_attention_heads(
+            self.layer_normalization_self_attention(embedded)
+        )  # layer nomalization is apply befor the processing
+        embedded = embedded + self.feed_foward(
+            self.layer_normalization_feed_foward(embedded)
+        )
+        return embedded
+
+
 # implement the Module in neural network from PyTorch
 class BigramsLanguageModel(nn.Module):
     def __init__(self):
         super().__init__()
-        # here each token direcly read off the logits from the next token from a lookup table
+        # create embeddings token direcly read off the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, num_embed_dim)
         self.position_embedding_table = nn.Embedding(block_size, num_embed_dim)
-        self.self_attention_head = Head(num_embed_dim)
+        # process the attention and MLP
+        self.blocks = nn.Sequential(
+            *[Block(num_embed_dim, num_heads=num_heads) for _ in range(num_layers)],
+        )
+        self.layer_normaliztion = nn.LayerNorm(num_embed_dim)
+        # process back from embeddings to vocabulary
         self.lang_model_head = nn.Linear(num_embed_dim, vocab_size)
 
     def forward(self, context, targets=None):
-        T, B = context.shape  # save the context dimention in T
+        B, T = context.shape  # save the context dimention in T
 
         # it return the probabilities on the table compering prob of each char be follow by another
         tokens_embedded = self.token_embedding_table(
@@ -156,7 +233,8 @@ class BigramsLanguageModel(nn.Module):
             torch.arange(T, device=device)
         )  # (T, C)
         embedded = tokens_embedded + position_embedded  # (B, T, C)
-        embedded = self.self_attention_head(embedded)
+        embedded = self.blocks(embedded)
+        embedded = self.layer_normaliztion(embedded)
         logits = self.lang_model_head(embedded)  # (B, T, vocab_size)
 
         if targets is None:
@@ -182,7 +260,7 @@ class BigramsLanguageModel(nn.Module):
             # crop the context to the lest block_size tokens
             context_crop = context[:, -block_size:]
             # get the current prediction
-            logits, _ = self(context_crop)  # ignoring the loss tha should be None here
+            logits, _ = self(context_crop)  # ignoring the loss that should be None here
             # focus only on the last time step (T)
             logits = logits[:, -1, :]  # it become (B, C)
             # apply softmax to get probabilities
@@ -201,6 +279,9 @@ class BigramsLanguageModel(nn.Module):
 
 model = BigramsLanguageModel()
 m = model.to(device)
+
+# print the number of parameters in the model
+print(sum(p.numel() for p in m.parameters()) / 1e6, "M parameters")
 
 # #############################################
 # Training the model
@@ -247,6 +328,4 @@ def generate_sample(max_tokens=500):
     print(text_decoded)
 
 
-generate_sample()
-
-# stoped in 1h20min
+generate_sample(10000)
