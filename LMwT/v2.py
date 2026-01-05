@@ -3,7 +3,7 @@
 
 import torch
 import torch.nn as nn
-from torch.nn import Dropout, functional as F
+from torch.nn import functional as F
 
 # ###########################################
 # Hyperparams
