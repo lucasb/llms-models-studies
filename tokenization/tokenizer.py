@@ -1,3 +1,9 @@
+import regex as re
+
+# partern to split tokens
+GPT4LIKE_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
+
+
 # get pair from a list of integer
 # ex. [1,2,3,1,2] -> {(1,2): 2. (2,3): 1, (3,1): 1}
 def get_pair_frequency_counts(
@@ -34,6 +40,7 @@ def merge_pair(vocab_ids: list[int], pair: tuple[int, int], pair_id: int) -> lis
 
 class Tokenizer:
     def __init__(self) -> None:
+        self.pattern = re.compile(GPT4LIKE_SPLIT_PATTERN)
         self.merges = {}
         self.spacials = {}
         self.vocab = {}
@@ -53,15 +60,20 @@ class Tokenizer:
         assert vocab_size >= 256
         num_merges = vocab_size - 256
 
+        # split the text up into chunks
+        text_chunks = re.findall(self.pattern, text)
+
         # vocab ids from training text
-        text_bytes = text.encode("utf-8")
-        text_vocab_ids = list(text_bytes)
+        text_vocab_ids = [list(txt_ch.encode("utf-8")) for txt_ch in text_chunks]
 
         vocab = self._build_vocab()
         merges = {}  # pairs(int, int), pair_id(int)
 
         for i in range(num_merges):
-            pair_frequency = get_pair_frequency_counts(text_vocab_ids)
+            # count the pair frequency
+            pair_frequency = {}
+            for txt_chunks in text_vocab_ids:
+                get_pair_frequency_counts(txt_chunks, pair_frequency)
 
             # more frequenty pair
             # key need to look to value max insted of key max
@@ -74,7 +86,10 @@ class Tokenizer:
             vocab[vocab_pair_id] = vocab[pair[0]] + vocab[pair[1]]
 
             # update text_vocab_ids from training text
-            text_vocab_ids = merge_pair(text_vocab_ids, pair, vocab_pair_id)
+            text_vocab_ids = [
+                merge_pair(txt_chunks, pair, vocab_pair_id)
+                for txt_chunks in text_vocab_ids
+            ]
 
             if verbose:
                 print(
@@ -85,16 +100,25 @@ class Tokenizer:
         self.vocab = vocab  # to us in decode()
 
     def encode(self, text: str) -> list[int]:
-        text_bytes = text.encode("utf-8")
-        vocab_ids = list(text_bytes)
+        # encode the chunck
+        def _encode_chunks(text_bytes):
+            vocab_ids = list(text_bytes)
+            if len(vocab_ids) > 1:
+                # local copy to iterate
+                merges_sorted = dict(
+                    sorted(self.merges.items(), key=lambda item: item[1])
+                )
+                for pair, pair_id in merges_sorted.items():
+                    vocab_ids = merge_pair(vocab_ids, pair, pair_id)
+            return vocab_ids
 
-        if len(vocab_ids) > 1:
-            # local copy to iterate
-            merges_sorted = dict(sorted(self.merges.items(), key=lambda item: item[1]))
-            for pair, pair_id in merges_sorted.items():
-                vocab_ids = merge_pair(vocab_ids, pair, pair_id)
-
-        return vocab_ids
+        text_chunks = re.findall(self.pattern, text)
+        ids = []
+        for chunk in text_chunks:
+            chunk_bytes = chunk.encode("utf-8")
+            chunk_ids = _encode_chunks(chunk_bytes)
+            ids.extend(chunk_ids)
+        return ids
 
     def decode(self, vocab_ids: list[int]) -> str:
         text_bytes = b"".join(self.vocab[vocab_id] for vocab_id in vocab_ids)
@@ -114,10 +138,16 @@ if __name__ == "__main__":
     file = "wikipedia_tartan.txt"
     with open(file, "r", encoding="utf-8") as f:
         content = f.read()
-        tokenizer.train(content, 1000, True)
+        tokenizer.train(content, 5000, True)
 
     print("----")
-    print(tokenizer.merges)
-    enc = tokenizer.encode(text)
-    dec = tokenizer.decode(enc)
-    print(text, enc, dec)
+    file = "wikipedia_python.txt"
+    with open(file, "r", encoding="utf-8") as f:
+        content = f.read()
+        text = content[:1000]
+        enc = tokenizer.encode(text)
+        dec = tokenizer.decode(enc)
+        print(text)
+        print(enc)
+        print(dec)
+        print(len(enc))
