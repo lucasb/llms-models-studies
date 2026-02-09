@@ -1,4 +1,5 @@
 import regex as re
+import unicodedata, os
 
 # partern to split tokens
 GPT4LIKE_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
@@ -38,11 +39,26 @@ def merge_pair(vocab_ids: list[int], pair: tuple[int, int], pair_id: int) -> lis
     return merged_ids
 
 
+def render_token_to_file(t: bytes) -> str:
+    def _replace_control_chars(s: str) -> str:
+        chars = []
+        for str_char in s:
+            if unicodedata.category(str_char) != "C":
+                chars.append(str_char)
+            else:
+                chars.append(f"\\u{ord(str_char):04x}")
+        return "".join(chars)
+
+    s = t.decode("utf-8", errors="replace")
+    s = _replace_control_chars(s)
+    return s
+
+
 class Tokenizer:
     def __init__(self) -> None:
         self.pattern = re.compile(GPT4LIKE_SPLIT_PATTERN)
         self.merges = {}
-        self.spacials = {}
+        self.specials = {}
         self.vocab = {}
 
     def _build_vocab(self) -> dict:
@@ -52,8 +68,8 @@ class Tokenizer:
         for (idx1, idx2), i in self.merges.items():
             vocab[i] = vocab[idx1] + vocab[idx2]
         # sequence of chars to represent special behavor tokens
-        for spacial_token, i in self.spacials.items():
-            vocab[i] = spacial_token.encode("utf-8")
+        for special_token, i in self.specials.items():
+            vocab[i] = special_token.encode("utf-8")
         return vocab
 
     def train(self, text: str, vocab_size: int, verbose: bool = False) -> None:
@@ -125,10 +141,43 @@ class Tokenizer:
         return text_bytes.decode("utf-8", errors="replace")
 
     def save(self, model_name: str) -> None:
-        pass
+        model_file = model_name + ".model"
+        with open(model_file, "w") as f:
+            f.write("version 1\n")
+            f.write(f"{self.pattern}\n")
+            f.write(f"{len(self.specials)}\n")
+
+            for special, idx in self.specials.items():
+                f.write(f"{special} {idx}\n")
+
+            for idx1, idx2 in self.merges:
+                f.write(f"{idx1} {idx2}\n")
 
     def load(self, model_file: str) -> None:
-        pass
+        assert model_file.endswith(".model")
+
+        merges = {}
+        specials = {}
+        idx = 256
+
+        with open(model_file, "r", encoding="utf-8") as f:
+            version = f.readline().strip()
+            assert version == "version 1"
+            self.pattern = f.readline().strip()
+            num_special = int(f.readline().strip())
+            for _ in range(num_special):
+                special, special_idx = f.readline().strip().strip()
+                specials[special] = int(special_idx)
+
+            # read merges
+            for line in f:
+                idx1, idx2 = map(int, line.split())
+                merges[idx1, idx2] = idx
+                idx += 1
+
+        self.merges = merges
+        self.specials = specials
+        self.vocab = self._build_vocab()
 
 
 if __name__ == "__main__":
@@ -138,7 +187,13 @@ if __name__ == "__main__":
     file = "wikipedia_tartan.txt"
     with open(file, "r", encoding="utf-8") as f:
         content = f.read()
-        tokenizer.train(content, 5000, True)
+        tokenizer.train(content, 500, True)
+
+    tokenizer.save("tok")
+
+    filename = "tok.model"
+    assert os.path.isfile(filename)
+    tokenizer.load(filename)
 
     print("----")
     file = "wikipedia_python.txt"
