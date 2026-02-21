@@ -2,7 +2,7 @@
 # based on this colab: https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing#scrollTo=wJpXpmjEYC_T
 
 # read file / dataset in to inspect it
-with open("input.txt", "r", encoding="UTF-8") as f:
+with open("../datasets/input.txt", "r", encoding="UTF-8") as f:
     text = f.read()
 
 print("length of dataset in chatacters: ", len(text))

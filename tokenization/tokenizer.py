@@ -182,7 +182,7 @@ if __name__ == "__main__":
     text = "aaaabbaaacccc"
     tokenizer = Tokenizer()
 
-    file = "wikipedia_tartan.txt"
+    file = "../datasets/wikipedia_tartan.txt"
     with open(file, "r", encoding="utf-8") as f:
         content = f.read()
         tokenizer.train(content, 5000, True)
@@ -196,7 +196,7 @@ if __name__ == "__main__":
     newtok.load(filename)
 
     print("----")
-    file = "wikipedia_python.txt"
+    file = "../datasets/wikipedia_python.txt"
     with open(file, "r", encoding="utf-8") as f:
         content = f.read()
         text = content[:1000]

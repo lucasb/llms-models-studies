@@ -1,9 +1,12 @@
-# v2.py
+# v3tok.py
 # based on this colab: https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing#scrollTo=wJpXpmjEYC_T
+# add tokenizer model in part
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from tokenizer import Tokenizer
+
 
 # ###########################################
 # Hyperparams
@@ -19,6 +22,8 @@ num_embed_dim = 64  # numeber of embedding dimentions
 num_heads = 4
 num_layers = 4
 dropout = 0.2  # % of neurons will be removed during trainig randonly
+vocab_size = 5000
+
 
 # keep the rand fucntion fixed.
 torch.manual_seed(1337)
@@ -28,26 +33,34 @@ with open("../datasets/input.txt", "r", encoding="UTF-8") as f:
     text = f.read()
 
 # descovery our vocabolary is
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
+# chars = sorted(list(set(text)))
+# vocab_size = len(chars)
 
 # ###########################################
 # Tokenize (Encoding and Decoding chars)
 # strategy: use the position on chars list as the reference for enconding and decoding
 # ###########################################
 
+tokenizer = Tokenizer()
+
+tokenizer.train(text, vocab_size, True)
+print(len(tokenizer.vocab))
+print(len(tokenizer.merges))
+
 # create a dictionary mapping from char to int and vice versa
-char2int = {char: idx for idx, char in enumerate(chars)}
-int2char = {idx: char for idx, char in enumerate(chars)}
+# char2int = {char: idx for idx, char in enumerate(chars)}
+# int2char = {idx: char for idx, char in enumerate(chars)}
 
 
 # HELPERS: encode and decode functions
 def encode(str):
-    return [char2int[char] for char in str]
+    # return [char2int[char] for char in str]
+    return tokenizer.encode(str)
 
 
-def decode(int):
-    return "".join([int2char[idx] for idx in int])
+def decode(ints):
+    # return "".join([int2char[idx] for idx in int])
+    return tokenizer.decode(ints)
 
 
 # ############################################
