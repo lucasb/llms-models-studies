@@ -1,6 +1,7 @@
 import os
 import unicodedata
 import regex as re
+from typing import Optional
 
 # partern to split tokens
 GPT4LIKE_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
@@ -9,7 +10,7 @@ GPT4LIKE_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{
 # get pair from a list of integer
 # ex. [1,2,3,1,2] -> {(1,2): 2. (2,3): 1, (3,1): 1}
 def get_pair_frequency_counts(
-    vocab_ids: list[int], counts_to_update: dict = None
+    vocab_ids: list[int], counts_to_update: Optional[dict]
 ) -> dict:
     counts = {} if counts_to_update is None else counts_to_update
     vocab_ids_length = len(vocab_ids)
@@ -89,11 +90,11 @@ class Tokenizer:
             # count the pair frequency
             pair_frequency = {}
             for txt_chunks in text_vocab_ids:
-                get_pair_frequency_counts(txt_chunks, pair_frequency)
+                pair_frequency = get_pair_frequency_counts(txt_chunks, pair_frequency)
 
             # more frequenty pair
             # key need to look to value max insted of key max
-            pair = max(pair_frequency, key=pair_frequency.get)
+            pair = max(pair_frequency, key=lambda k: pair_frequency[k])
             vocab_pair_id = len(vocab)
 
             # add on merge list and vocab
